@@ -4,6 +4,7 @@ import time
 import yaml
 from brownie import *
 from .util.logger import logger
+from .util.util import get_ltoken_contracts_dict
 
 logger.add_console()
 logger.info('Connecting to network...')
@@ -27,6 +28,9 @@ usdc_contract = Contract.from_explorer('0xff970a61a04b1ca14834a43f5de4533ebddb5c
 # oracle contract
 price_oracle_contract = Contract.from_explorer("0x5947189d2D7765e4f629C803581FfD06bc57dE9B")
 
+# ltoken contracts dict
+ltoken_contracts_dict = get_ltoken_contracts_dict()
+
 
 def poll_liquidatable_accounts():
     res = requests.get('https://api.lodestarfinance.io/liquidatableAccounts')
@@ -46,16 +50,20 @@ def liquidate(liquidatableAccount):
 
     borrower_address = liquidatableAccount['borrowAddress']
     collateral_address = liquidatableAccount['collateralAddress']
-    repay_ltoken = liquidatableAccount['marketAddress']
+    repay_ltoken_address = liquidatableAccount['marketAddress']
     liquidatable_amount = liquidatableAccount['repayAmount']
 
-    try:
-        repay_ltoken_contract = Contract.from_explorer(repay_ltoken)
-        # todo handle unverified contracts
-    except Exception as e:
-        raise Exception(f'could not load contract for market_address {repay_ltoken}: {e}')
+    # load contract for repay ltoken
+    repay_ltoken_contract = ltoken_contracts_dict.get(repay_ltoken_address, None)
+    if repay_ltoken_contract is None:
+        logger.warning(f'Repay ltoken {repay_ltoken_address} not available in ltoken_contracts_dict')
+        try:
+            repay_ltoken_contract = Contract.from_explorer(repay_ltoken_address)
+        except Exception as e:
+            raise Exception(f'could not load contract for market_address {repay_ltoken_address}: {e}')
 
     # read available balance of the repay token
+    # todo to be faster, load from dict {ltoken_address: underlying_contract}
     repay_token = repay_ltoken_contract.underlying()
     repay_token_contract = Contract.from_explorer(repay_token)
     repay_token_available = get_balance(repay_token_contract)
@@ -143,7 +151,3 @@ def main():
             logger.error(f'Error: {e}')
         finally:
             time.sleep(1)
-
-
-if __name__ == '__main__':
-    main()
