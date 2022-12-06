@@ -1,9 +1,9 @@
 import requests
 import json
 import time
-from logger import logger
-from brownie import *
 import yaml
+from brownie import *
+from .util.logger import logger
 
 logger.add_console()
 logger.info('Connecting to network...')
@@ -23,6 +23,10 @@ router = interface.ISwapRouter('0xE592427A0AEce92De3Edee1F18E0157C05861564')
 
 # usdc is the starting balance
 usdc_contract = Contract.from_explorer('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
+
+# oracle contract
+price_oracle_contract = Contract.from_explorer("0x5947189d2D7765e4f629C803581FfD06bc57dE9B")
+
 
 def poll_liquidatable_accounts():
     res = requests.get('https://api.lodestarfinance.io/liquidatableAccounts')
@@ -49,30 +53,30 @@ def liquidate(liquidatableAccount):
         repay_ltoken_contract = Contract.from_explorer(repay_ltoken)
         # todo handle unverified contracts
     except Exception as e:
-        raise Exception(f'could not load contract for market_address {repay_token}: {e}')
+        raise Exception(f'could not load contract for market_address {repay_ltoken}: {e}')
 
     # read available balance of the repay token
     repay_token = repay_ltoken_contract.underlying()
     repay_token_contract = Contract.from_explorer(repay_token)
     repay_token_available = get_balance(repay_token_contract)
     repay_token_decimals = repay_token_contract.decimals()
-    logger.info(f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
+    logger.debug(
+        f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
 
     # swap usdc for the repay token if needed
     if repay_token_available < 0.9 * liquidatable_amount:
-        logger.info(
+        logger.debug(
             f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
         repay_token_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
         repay_token_needed_norm = repay_token_needed / 10 ** repay_token_decimals
-
-
 
         expected_price = get_underlying_price(repay_ltoken_contract, repay_token_contract)
 
         logger.info(f'Swapping USDC for {repay_token_needed_norm} {repay_token_contract.symbol()}')
 
         usdc_balance = get_balance(usdc_contract) / (10 ** usdc_contract.decimals())
-        amount_in_max = min(usdc_balance * 0.99, (repay_token_needed_norm * expected_price) * 1.01)  # max deviation from expected price
+        amount_in_max = min(usdc_balance * 0.99,
+                            (repay_token_needed_norm * expected_price) * 1.01)  # max deviation from expected price
 
         try:
             tx = swap(usdc_contract, repay_token_contract, repay_token_needed_norm, amount_in_max)
@@ -82,11 +86,12 @@ def liquidate(liquidatableAccount):
 
     # read again available balance of the repay token
     repay_token_available = get_balance(repay_token_contract)
-    logger.info(f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
+    logger.debug(
+        f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
 
     # define repay amount
     repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
-    logger.info(f'Repay amount for token {repay_token} is {repay_amount}')
+    logger.debug(f'Repay amount for token {repay_token} is {repay_amount}')
 
     # liquidate
     logger.info('Executing liquidation...')
@@ -123,16 +128,14 @@ def swap(token_in: Contract, token_out: Contract, amount_out: int, amount_in_max
         {'from': user}
     )
 
-def get_underlying_price(ltoken: Contract, token: Contract) -> float:
-    price_oracle_contract = Contract.from_explorer("0x5947189d2D7765e4f629C803581FfD06bc57dE9B")
-    aggregator_address = price_oracle_contract.aggregators(ltoken.address)[0]
-    return (price_oracle_contract.getPriceFromChainlink(aggregator_address) / (
-            10 ** token.decimals()))
 
+def get_underlying_price(ltoken: Contract, token: Contract) -> float:
+    aggregator_address = price_oracle_contract.aggregators(ltoken.address)[0]
+    return price_oracle_contract.getPriceFromChainlink(aggregator_address) / (10 ** token.decimals())
 
 
 def main():
-    logger.info('Listening to liquidatable accounts...')
+    logger.info('Polling liquidatable accounts...')
     while True:
         try:
             poll_liquidatable_accounts()
