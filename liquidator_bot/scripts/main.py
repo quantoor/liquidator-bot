@@ -71,26 +71,22 @@ def liquidate(liquidatableAccount):
 
         logger.info(f'Swapping USDC for {repay_token_needed_norm} {repay_token_contract.symbol()}')
 
-
-        amount_in_max = (repay_token_needed_norm / expected_price) * 1.01  # max deviation from expected price
-
-        # todo logic: if balance not enough, exactInputSingle must be used
-        # available USDC balance
-        # usdc_balance = get_balance(usdc_contract)
+        usdc_balance = get_balance(usdc_contract) / (10 ** usdc_contract.decimals())
+        amount_in_max = min(usdc_balance * 0.99, (repay_token_needed_norm * expected_price) * 1.01)  # max deviation from expected price
 
         try:
-            tx = swap(usdc_contract, repay_token_contract, repay_token_needed, amount_in_max)
+            tx = swap(usdc_contract, repay_token_contract, repay_token_needed_norm, amount_in_max)
             logger.info(f'Executed swap {tx}')
         except Exception as e:
             raise Exception(f'swap failed: {e}')
 
     # read again available balance of the repay token
     repay_token_available = get_balance(repay_token_contract)
-    logger.info(f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available}')
+    logger.info(f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
 
     # define repay amount
-    repay_amount = min(repay_token_available, liquidatable_amount * 0.99)
-    logger.info(f'Repay amount for token {repay_token} is {requests}')
+    repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
+    logger.info(f'Repay amount for token {repay_token} is {repay_amount}')
 
     # liquidate
     logger.info('Executing liquidation...')
