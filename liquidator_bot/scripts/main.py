@@ -24,7 +24,6 @@ router = interface.ISwapRouter('0xE592427A0AEce92De3Edee1F18E0157C05861564')
 # usdc is the starting balance
 usdc_contract = Contract.from_explorer('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
 
-
 def poll_liquidatable_accounts():
     res = requests.get('https://api.lodestarfinance.io/liquidatableAccounts')
     if res.status_code != 200:
@@ -43,30 +42,36 @@ def liquidate(liquidatableAccount):
 
     borrower_address = liquidatableAccount['borrowAddress']
     collateral_address = liquidatableAccount['collateralAddress']
-    repay_token = liquidatableAccount['marketAddress']
+    repay_ltoken = liquidatableAccount['marketAddress']
     liquidatable_amount = liquidatableAccount['repayAmount']
 
     try:
-        repay_token_contract = Contract.from_explorer(repay_token)
+        repay_ltoken_contract = Contract.from_explorer(repay_ltoken)
         # todo handle unverified contracts
     except Exception as e:
         raise Exception(f'could not load contract for market_address {repay_token}: {e}')
 
     # read available balance of the repay token
+    repay_token = repay_ltoken_contract.underlying()
+    repay_token_contract = Contract.from_explorer(repay_token)
     repay_token_available = get_balance(repay_token_contract)
-    logger.info(f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available}')
+    repay_token_decimals = repay_token_contract.decimals()
+    logger.info(f'Available balance for token {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
 
     # swap usdc for the repay token if needed
     if repay_token_available < 0.9 * liquidatable_amount:
-        logger.info(f'Repay token available: {repay_token_available}, liquidatable amount: {liquidatable_amount}')
+        logger.info(
+            f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
         repay_token_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
+        repay_token_needed_norm = repay_token_needed / 10 ** repay_token_decimals
 
-        # todo get $ price of repay token from oracle/coingecko/CEX
-        expected_price = 1
 
-        logger.info(f'Swapping USDC for {repay_token_needed} {repay_token_contract.symbol()}')
 
-        repay_token_needed_norm = repay_token_needed / 10 ** repay_token.decimals()
+        expected_price = get_underlying_price(repay_ltoken_contract, repay_token_contract)
+
+        logger.info(f'Swapping USDC for {repay_token_needed_norm} {repay_token_contract.symbol()}')
+
+
         amount_in_max = (repay_token_needed_norm / expected_price) * 1.01  # max deviation from expected price
 
         # todo logic: if balance not enough, exactInputSingle must be used
@@ -90,7 +95,7 @@ def liquidate(liquidatableAccount):
     # liquidate
     logger.info('Executing liquidation...')
     try:
-        tx = repay_token_contract.liquidateBorrow(borrower_address, repay_amount, collateral_address, {'from': user})
+        tx = repay_ltoken_contract.liquidateBorrow(borrower_address, repay_amount, collateral_address, {'from': user})
     except Exception as e:
         raise Exception(f'liquidation failed: {e}')
 
@@ -121,6 +126,13 @@ def swap(token_in: Contract, token_out: Contract, amount_out: int, amount_in_max
         ],
         {'from': user}
     )
+
+def get_underlying_price(ltoken: Contract, token: Contract) -> float:
+    price_oracle_contract = Contract.from_explorer("0x5947189d2D7765e4f629C803581FfD06bc57dE9B")
+    aggregator_address = price_oracle_contract.aggregators(ltoken.address)[0]
+    return (price_oracle_contract.getPriceFromChainlink(aggregator_address) / (
+            10 ** token.decimals()))
+
 
 
 def main():
