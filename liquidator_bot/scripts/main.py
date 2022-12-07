@@ -5,14 +5,17 @@ import yaml
 from brownie import *
 from .util.logger import logger
 from .util.util import get_ltoken_contracts_dict
+import os
+
+with open('config.yaml', 'r') as f:
+    cfg = yaml.load(f, Loader=yaml.FullLoader)
+
+os.environ['$ARBISCAN_TOKEN'] = cfg['arbiscan_token']
 
 
 class LiquidatorBot:
-    def __init__(self):
-        # load user account using username and password
-        with open('config.yaml', 'r') as f:
-            cfg = yaml.load(f, Loader=yaml.FullLoader)
-        self.user = accounts.load(cfg['username'], cfg['password'])
+    def __init__(self, username: str, password: str):
+        self.username = accounts.load(username, password)
 
         # load contract for uniswap v3 router
         self.router = interface.ISwapRouter('0xE592427A0AEce92De3Edee1F18E0157C05861564')
@@ -52,10 +55,10 @@ class LiquidatorBot:
     def _liquidate(self, liquidatableAccount):
         logger.info(f'Liquidating {liquidatableAccount}...')
 
-        borrower_address = liquidatableAccount['borrowAddress']
-        collateral_address = liquidatableAccount['collateralAddress']
-        repay_ltoken_address = liquidatableAccount['marketAddress']
-        liquidatable_amount = liquidatableAccount['repayAmount']
+        borrower_address = str(liquidatableAccount['borrowAddress']).strip()
+        collateral_address = str(liquidatableAccount['collateralAddress']).strip()
+        repay_ltoken_address = str(liquidatableAccount['marketAddress']).strip()
+        liquidatable_amount = int(liquidatableAccount['repayAmount'])
 
         # load contract for repay ltoken
         repay_ltoken_contract = self.ltoken_contracts_dict.get(repay_ltoken_address, None)
@@ -82,6 +85,7 @@ class LiquidatorBot:
             logger.debug(
                 f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
             repay_token_amount_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
+            repay_token_amount_needed = int(repay_token_amount_needed)
 
             self._get_more_repay_token(repay_token_amount_needed, repay_ltoken_contract, repay_token_contract)
 
@@ -96,7 +100,8 @@ class LiquidatorBot:
         # define repay amount
         repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
         repay_amount = int(repay_amount)
-        logger.debug(f'Repay amount for token {repay_token} is {repay_amount / (10 ** repay_token_contract.decimals())}')
+        logger.debug(
+            f'Repay amount for token {repay_token} is {repay_amount / (10 ** repay_token_contract.decimals())}')
 
         # check allowance for token spend on LODESTAR Finance
         self._set_allowance(repay_token_contract, repay_ltoken_contract, repay_amount)
@@ -111,6 +116,7 @@ class LiquidatorBot:
                 {'from': self.user}
             )
         except Exception as e:
+            # todo swap repay token back to USDC
             raise Exception(f'liquidation failed: {e}')
 
         logger.info(f'Liquidation executed: {tx}')
@@ -193,5 +199,5 @@ def main():
     except:
         pass
 
-    bot = LiquidatorBot()
+    bot = LiquidatorBot(username=cfg['username'], password=cfg['password'])
     bot.start()
