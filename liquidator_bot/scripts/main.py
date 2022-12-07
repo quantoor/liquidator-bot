@@ -95,12 +95,15 @@ class LiquidatorBot:
         repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
         logger.debug(f'Repay amount for token {repay_token} is {repay_amount}')
 
+        # check allowance for token spend on LODESTAR Finance
+        self._set_allowance(repay_token_contract, repay_ltoken_contract, repay_amount / (10 ** repay_token_decimals))
+
         # liquidate
         logger.info('Executing liquidation...')
         try:
             tx = repay_ltoken_contract.liquidateBorrow(
                 borrower_address,
-                repay_amount,
+                int(repay_amount),
                 collateral_address,
                 {'from': self.user}
             )
@@ -139,15 +142,18 @@ class LiquidatorBot:
         except Exception as e:
             raise Exception(f'swap failed: {e}')
 
-    def _swap(self, token_in: Contract, token_out: Contract, amount_out: int, amount_in_max: int):
-        # allowance
-        allowance = token_in.allowance(self.user.address, self.router.address)
-        print(f'Current allowance of USDC is: {allowance / (10 ** token_in.decimals())}')
+    def _set_allowance(self, token_spend: Contract, token_allowed: Contract, amount: int): # amount without decimals
+        allowance = token_spend.allowance(self.user.address, token_allowed)
+        print(f'Current allowance of {token_spend.symbol()} is: {allowance / (10 ** token_spend.decimals())}')
 
         # increase allowance if not enough
-        if allowance < (amount_in_max * 10 ** token_in.decimals()):
-            tx = token_in.approve(self.router.address, int(amount_in_max * 10 ** token_in.decimals()), {'from': self.user})
-            print(f'Allowed router to spend {amount_in_max} {token_in.name()}: {tx}')
+        if allowance < (amount * 10 ** token_spend.decimals()):
+            tx = token_spend.approve(token_allowed, int(amount * 10 ** token_spend.decimals()), {'from': self.user})
+            print(f'Allowed router to spend {amount} {token_spend.symbol()}: {tx}')
+
+
+    def _swap(self, token_in: Contract, token_out: Contract, amount_out: int, amount_in_max: int):
+        self._set_allowance(token_in, self.router.address, amount_in_max ** token_in.decimals())
 
         return self.router.exactOutputSingle(
             [
