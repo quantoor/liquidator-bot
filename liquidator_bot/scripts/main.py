@@ -140,6 +140,15 @@ class LiquidatorBot:
             raise Exception(f'swap failed: {e}')
 
     def _swap(self, token_in: Contract, token_out: Contract, amount_out: int, amount_in_max: int):
+        # allowance
+        allowance = token_in.allowance(self.user.address, self.router.address)
+        print(f'Current allowance of USDC is: {allowance / (10 ** token_in.decimals())}')
+
+        # increase allowance if not enough
+        if allowance < (amount_in_max * 10 ** token_in.decimals()):
+            tx = token_in.approve(self.router.address, int(amount_in_max * 10 ** token_in.decimals()), {'from': self.user})
+            print(f'Allowed router to spend {amount_in_max} {token_in.name()}: {tx}')
+
         return self.router.exactOutputSingle(
             [
                 token_in.address,  # token in
