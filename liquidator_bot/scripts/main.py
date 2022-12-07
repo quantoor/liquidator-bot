@@ -21,7 +21,7 @@ class LiquidatorBot:
         self.router = interface.ISwapRouter('0xE592427A0AEce92De3Edee1F18E0157C05861564')
 
         # usdc is the starting balance
-        self.usdc_contract = Contract.from_explorer('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
+        self.usdc_contract = Contract('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
 
         # ltoken contracts dict
         self.ltoken_contracts_dict = util.get_ltoken_contracts_dict()
@@ -62,14 +62,14 @@ class LiquidatorBot:
         if repay_ltoken_contract is None:
             logger.warning(f'Repay ltoken {repay_ltoken_address} not available in ltoken_contracts_dict')
             try:
-                repay_ltoken_contract = Contract.from_explorer(repay_ltoken_address)
+                repay_ltoken_contract = Contract(repay_ltoken_address)
             except Exception as e:
                 raise Exception(f'could not load contract for market_address {repay_ltoken_address}: {e}')
 
         # read available balance of the repay token
         # todo to be faster, load from dict {ltoken_address: underlying_contract}
         repay_token = repay_ltoken_contract.underlying()
-        repay_token_contract = Contract.from_explorer(repay_token)
+        repay_token_contract = Contract(repay_token)
         repay_token_decimals = repay_token_contract.decimals()
 
         # get available balance of the repay token
