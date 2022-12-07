@@ -2,10 +2,10 @@ import requests
 import json
 import time
 import yaml
+import os
 from brownie import *
 from .util.logger import logger
-from .util.util import get_ltoken_contracts_dict
-import os
+from .util import util
 
 with open('config.yaml', 'r') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
@@ -15,7 +15,7 @@ os.environ['$ARBISCAN_TOKEN'] = cfg['arbiscan_token']
 
 class LiquidatorBot:
     def __init__(self, username: str, password: str):
-        self.username = accounts.load(username, password)
+        self.user = accounts.load(username, password)
 
         # load contract for uniswap v3 router
         self.router = interface.ISwapRouter('0xE592427A0AEce92De3Edee1F18E0157C05861564')
@@ -23,11 +23,8 @@ class LiquidatorBot:
         # usdc is the starting balance
         self.usdc_contract = Contract.from_explorer('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
 
-        # oracle contract
-        self.price_oracle_contract = Contract.from_explorer("0x5947189d2D7765e4f629C803581FfD06bc57dE9B")
-
         # ltoken contracts dict
-        self.ltoken_contracts_dict = get_ltoken_contracts_dict()
+        self.ltoken_contracts_dict = util.get_ltoken_contracts_dict()
 
     def start(self):
         logger.info('Polling liquidatable accounts...')
@@ -87,12 +84,15 @@ class LiquidatorBot:
             repay_token_amount_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
             repay_token_amount_needed = int(repay_token_amount_needed)
 
-            self._get_more_repay_token(repay_token_amount_needed, repay_ltoken_contract, repay_token_contract)
-
-            # get new available balance of the repay token
-            repay_token_available = self._get_balance(repay_token_contract)
-            logger.debug(
-                f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
+            try:
+                self._get_more_repay_token(repay_token_amount_needed, repay_ltoken_contract, repay_token_contract)
+            except Exception as e:
+                logger.error(f'Could not get more of repay token: {e}')
+            else:
+                # get new available balance of the repay token
+                repay_token_available = self._get_balance(repay_token_contract)
+                logger.debug(
+                    f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
         else:
             logger.debug(
                 f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, no need to get more')
@@ -136,8 +136,7 @@ class LiquidatorBot:
         logger.info(
             f'Swapping USDC for {repay_token_needed / 10 ** repay_token_contract.decimals()} {repay_token_contract.symbol()}')
 
-        # todo fix this, we need price of the repay token in USDC
-        expected_price = self._get_underlying_price(repay_ltoken_contract, repay_token_contract)
+        expected_price = util.get_underlying_price(repay_ltoken_contract, repay_token_contract)
 
         usdc_balance = self._get_balance(self.usdc_contract)
 
@@ -184,10 +183,6 @@ class LiquidatorBot:
             ],
             {'from': self.user}
         )
-
-    def _get_underlying_price(self, ltoken: Contract, token: Contract) -> float:
-        aggregator_address = self.price_oracle_contract.aggregators(ltoken.address)[0]
-        return self.price_oracle_contract.getPriceFromChainlink(aggregator_address) / (10 ** token.decimals())
 
 
 def main():

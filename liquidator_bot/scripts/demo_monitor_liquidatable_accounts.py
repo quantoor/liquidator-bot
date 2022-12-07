@@ -2,7 +2,6 @@ import requests
 import json
 import time
 from util.logger import logger
-from brownie import *
 
 
 def listen():
@@ -30,13 +29,6 @@ def liquidate(liquidatableAccount):
 
 def main():
     logger.add_console()
-    logger.info('Connecting to network...')
-
-    try:
-        network.connect('arbitrum-main')
-    except:
-        pass
-
     logger.info('Listening to liquidatable accounts...')
     while True:
         try:
