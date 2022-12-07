@@ -81,22 +81,25 @@ class LiquidatorBot:
         if repay_token_available < 0.9 * liquidatable_amount:
             logger.debug(
                 f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
-            repay_token_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
-            repay_token_needed_norm = repay_token_needed / 10 ** repay_token_decimals
+            repay_token_amount_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
 
-            self._get_more_repay_token(repay_token_needed_norm, repay_ltoken_contract, repay_token_contract)
+            self._get_more_repay_token(repay_token_amount_needed, repay_ltoken_contract, repay_token_contract)
 
             # get new available balance of the repay token
             repay_token_available = self._get_balance(repay_token_contract)
             logger.debug(
                 f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
+        else:
+            logger.debug(
+                f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, no need to get more')
 
         # define repay amount
         repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
-        logger.debug(f'Repay amount for token {repay_token} is {repay_amount}')
+        repay_amount = int(repay_amount)
+        logger.debug(f'Repay amount for token {repay_token} is {repay_amount / (10 ** repay_token_contract.decimals())}')
 
         # check allowance for token spend on LODESTAR Finance
-        self._set_allowance(repay_token_contract, repay_ltoken_contract, repay_amount / (10 ** repay_token_decimals))
+        self._set_allowance(repay_token_contract, repay_ltoken_contract, repay_amount)
 
         # liquidate
         logger.info('Executing liquidation...')
@@ -121,39 +124,46 @@ class LiquidatorBot:
     def _get_balance(self, token: Contract) -> int:
         return token.balanceOf(self.user.address)
 
-    def _get_more_repay_token(self, repay_token_needed_norm: int, repay_ltoken_contract: Contract,
+    def _get_more_repay_token(self, repay_token_needed: int, repay_ltoken_contract: Contract,
                               repay_token_contract: Contract):
 
-        logger.info(f'Swapping USDC for {repay_token_needed_norm} {repay_token_contract.symbol()}')
+        logger.info(
+            f'Swapping USDC for {repay_token_needed / 10 ** repay_token_contract.decimals()} {repay_token_contract.symbol()}')
 
+        # todo fix this, we need price of the repay token in USDC
         expected_price = self._get_underlying_price(repay_ltoken_contract, repay_token_contract)
 
-        usdc_balance = self._get_balance(self.usdc_contract) / (10 ** self.usdc_contract.decimals())
+        usdc_balance = self._get_balance(self.usdc_contract)
 
         # todo remove hardcoding
         max_slippage = 1  # max perc deviation from expected price
-        amount_in_max = min(usdc_balance * 0.99, (repay_token_needed_norm * expected_price) * (1 + max_slippage / 100))
+        amount_in_max = min(
+            usdc_balance * 0.99,
+            (repay_token_needed * expected_price) * (1 + max_slippage / 100)
+        )
+        amount_in_max = int(amount_in_max)
 
         # todo fix the logic: if not enough USDC balance, need to use exactInputSingle to maximize output
 
         try:
-            tx = self._swap(self.usdc_contract, repay_token_contract, repay_token_needed_norm, amount_in_max)
+            tx = self._swap(self.usdc_contract, repay_token_contract, repay_token_needed, amount_in_max)
             logger.info(f'Executed swap {tx}')
         except Exception as e:
             raise Exception(f'swap failed: {e}')
 
-    def _set_allowance(self, token_spend: Contract, token_allowed: Contract, amount: int): # amount without decimals
-        allowance = token_spend.allowance(self.user.address, token_allowed)
-        print(f'Current allowance of {token_spend.symbol()} is: {allowance / (10 ** token_spend.decimals())}')
+    def _set_allowance(self, token_contract: Contract, spender: Contract, amount: int):  # amount without decimals
+        allowance = token_contract.allowance(self.user.address, spender)
+        logger.debug(
+            f'Current allowance of {token_contract.symbol()} is: {allowance / (10 ** token_contract.decimals())}')
 
         # increase allowance if not enough
-        if allowance < (amount * 10 ** token_spend.decimals()):
-            tx = token_spend.approve(token_allowed, int(amount * 10 ** token_spend.decimals()), {'from': self.user})
-            print(f'Allowed router to spend {amount} {token_spend.symbol()}: {tx}')
-
+        if allowance < amount:
+            tx = token_contract.approve(spender, amount, {'from': self.user})
+            logger.debug(
+                f'Allowed router to spend {amount / (10 ** token_contract.decimals())} {token_contract.symbol()}: {tx}')
 
     def _swap(self, token_in: Contract, token_out: Contract, amount_out: int, amount_in_max: int):
-        self._set_allowance(token_in, self.router.address, amount_in_max ** token_in.decimals())
+        self._set_allowance(token_in, self.router.address, amount_in_max)
 
         return self.router.exactOutputSingle(
             [
@@ -162,8 +172,8 @@ class LiquidatorBot:
                 3000,  # fee 0.03%
                 self.user.address,  # recipient
                 int(time.time() + 30) * 1000,  # deadline (UTC timestamp in ms)
-                int(amount_out * 10 ** token_out.decimals()),  # amount out
-                int(amount_in_max * 10 ** token_in.decimals()),  # amount in max
+                int(amount_out),  # amount out
+                int(amount_in_max),  # amount in max
                 0  # sqrtPriceLimitX96 - ignore this
             ],
             {'from': self.user}
