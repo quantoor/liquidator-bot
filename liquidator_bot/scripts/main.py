@@ -5,6 +5,7 @@ import yaml
 import os
 from brownie import *
 from .util.logger import logger
+from .util.telegram_bot import TelegramBot
 from .util import util
 
 with open('config.yaml', 'r') as f:
@@ -26,7 +27,11 @@ class LiquidatorBot:
         # ltoken contracts dict
         self.ltoken_contracts_dict = util.get_ltoken_contracts_dict()
 
+        # telegram bot
+        self.tg_bot = TelegramBot(cfg['telegram_chat_id'], cfg['telegram_token'])
+
     def start(self):
+        self.tg_bot.send('Bot started')
         logger.info('Polling liquidatable accounts...')
 
         while True:  # todo change this
@@ -35,11 +40,12 @@ class LiquidatorBot:
             except Exception as e:
                 logger.error(f'Error: {e}')
             finally:
-                time.sleep(1)
+                time.sleep(10)
 
     def _poll_liquidatable_accounts(self):
         res = requests.get('https://api.lodestarfinance.io/liquidatableAccounts')
         if res.status_code != 200:
+            self.tg_bot.send(f'Error {res.status_code}')
             logger.error(f'Error {res.status_code}')
             return
 
@@ -50,6 +56,7 @@ class LiquidatorBot:
             self._liquidate(liquidatableAccount)
 
     def _liquidate(self, liquidatableAccount):
+        self.tg_bot.send(f'Liquidating {liquidatableAccount}...')
         logger.info(f'Liquidating {liquidatableAccount}...')
 
         borrower_address = str(liquidatableAccount['borrowAddress']).strip()
