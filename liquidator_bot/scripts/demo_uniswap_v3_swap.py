@@ -3,8 +3,11 @@ import time
 import os
 import yaml
 
+with open('config.yaml', 'r') as f:
+    cfg = yaml.load(f, Loader=yaml.FullLoader)
+
 # set arbitrum scan api token
-os.environ['$ARBISCAN_TOKEN'] = 'XRM4V641WUSCDEM9VIHEHRZPTNAG23FAX9'
+os.environ['$ARBISCAN_TOKEN'] = cfg['arbiscan_token']
 
 try:
     network.connect('arbitrum-main')
@@ -12,16 +15,14 @@ except:
     pass
 
 # load user account using username and password
-with open('config.yaml', 'r') as f:
-    config = yaml.load(f, Loader=yaml.FullLoader)
-user = accounts.load(config['username'], config['password'])
+user = accounts.load(cfg['username'], cfg['password'])
 
 # load contract for uniswap v3 router
 router = interface.ISwapRouter('0xE592427A0AEce92De3Edee1F18E0157C05861564')
 
 # load contracts for tokens to swap
-usdc = Contract.from_explorer('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
-weth = Contract.from_explorer('0x82af49447d8a07e3bd95bd0d56f35241523fbab1')
+usdc = Contract('0xff970a61a04b1ca14834a43f5de4533ebddb5cc8')
+weth = Contract('0x82af49447d8a07e3bd95bd0d56f35241523fbab1')
 
 # define decimals
 usdc_dec = 10 ** usdc.decimals()
@@ -64,7 +65,3 @@ def main():
     )
 
     print(f'Swap done: {tx}')
-
-
-if __name__ == '__main__':
-    main()
