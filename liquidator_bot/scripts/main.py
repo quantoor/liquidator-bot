@@ -15,7 +15,7 @@ with open('config.yaml', 'r') as f:
 os.environ['$ARBISCAN_TOKEN'] = cfg['arbiscan_token']
 
 # for testing
-CHECK_STILL_LIQUIDATABLE = True
+CHECK_IF_LIQUIDATABLE = True
 GET_MORE_REPAY_TOKEN = True
 EXECUTE_LIQUIDATION = True
 
@@ -49,21 +49,22 @@ class LiquidatorBot:
             except Exception as e:
                 logger.error(f'Error: {e} -> {traceback.format_exc()}')
             finally:
-                time.sleep(10)
+                time.sleep(1)
 
     def _poll_liquidatable_accounts(self):
         res = requests.get('https://api.lodestarfinance.io/liquidatableAccounts')
         if res.status_code != 200:
             self.tg_bot.send(f'Error {res.status_code}')
             logger.error(f'Error {res.status_code}')
+            time.sleep(10)
             return
 
         res = json.loads(res.text)
 
         for liquidatableAccount in res['liquidatableAccounts']:
-            self._liquidate(liquidatableAccount)
+            self._process_liquidation(liquidatableAccount)
 
-    def _liquidate(self, liquidatableAccount):
+    def _process_liquidation(self, liquidatableAccount):
         self.tg_bot.send(f'Liquidating {liquidatableAccount}')
         logger.info(f'Liquidating {liquidatableAccount}')
 
@@ -73,7 +74,7 @@ class LiquidatorBot:
         liquidatable_amount = int(liquidatableAccount['repayAmount'])
 
         # check if account is still liquidatable
-        if CHECK_STILL_LIQUIDATABLE:
+        if CHECK_IF_LIQUIDATABLE:
             _, _, fallout = self.unitroller.getAccountLiquidity(borrower_address)
             if fallout == 0:
                 logger.warning(f'Account {borrower_address} is not liquidatable')
@@ -83,10 +84,7 @@ class LiquidatorBot:
         repay_ltoken_contract = self.ltoken_contracts_dict.get(repay_ltoken_address, None)
         if repay_ltoken_contract is None:
             logger.warning(f'Repay ltoken {repay_ltoken_address} not available in ltoken_contracts_dict')
-            try:
-                repay_ltoken_contract = util.load_contract(repay_ltoken_address)
-            except Exception as e:
-                raise Exception(f'could not load contract for market_address {repay_ltoken_address}: {e}')
+            repay_ltoken_contract = util.load_contract(repay_ltoken_address)
 
         # read available balance of the repay token
         # todo to be faster, load from dict {ltoken_address: underlying_contract}
@@ -104,7 +102,7 @@ class LiquidatorBot:
             if repay_token_available < 0.9 * liquidatable_amount:
                 logger.debug(
                     f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
-                repay_token_amount_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
+                repay_token_amount_needed = (liquidatable_amount - repay_token_available) * 0.99  # give some margin
                 repay_token_amount_needed = int(repay_token_amount_needed)
 
                 try:
@@ -131,31 +129,39 @@ class LiquidatorBot:
 
         # liquidate
         if EXECUTE_LIQUIDATION:
-            logger.info('Executing liquidation...')
             try:
-                tx = repay_ltoken_contract.liquidateBorrow(
-                    borrower_address,
-                    int(repay_amount),
-                    collateral_address,
-                    {'from': self.user, 'gas_limit': 200_000, 'allow_revert': True}
-                )
-
-                # todo change this
-                logger.debug(str(tx.info()))
-                logger.debug(f'revert_msg: {tx.revert_msg}')
-                logger.debug(f'traceback: {tx.traceback()}')
-                logger.debug(f'call_trace {tx.call_trace()}')
+                tx = self._liquidate(repay_ltoken_contract, borrower_address, repay_amount, collateral_address)
             except Exception as e:
                 # todo swap repay token back to USDC
                 raise Exception(f'liquidation failed: {e}')
+            else:
+                logger.info(f'Liquidation executed: {tx}')
 
-            logger.info(f'Liquidation executed: {tx}')
+                # todo use seized lToken to get the collateral token
 
-            # todo use seized lToken to get the collateral token
+                # todo swap the collateral token for USDC
 
-            # todo swap the collateral token to usdc
+                # profit!
 
-            # profit!
+    def _liquidate(self, ltoken_contract: Contract, borrower_address: str, repay_amount: int,
+                   collateral_address: str):
+
+        logger.info('Executing liquidation...')
+
+        tx = ltoken_contract.liquidateBorrow(
+            borrower_address,
+            int(repay_amount),
+            collateral_address,
+            {'from': self.user, 'gas_limit': 200_000, 'allow_revert': True}
+        )
+
+        # todo change this
+        logger.debug(str(tx.info()))
+        logger.debug(f'revert_msg: {tx.revert_msg}')
+        logger.debug(f'traceback: {tx.traceback()}')
+        logger.debug(f'call_trace {tx.call_trace()}')
+
+        return tx
 
     def _get_balance(self, token: Contract) -> int:
         return token.balanceOf(self.user.address)
