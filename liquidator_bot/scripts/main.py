@@ -1,3 +1,5 @@
+import logging
+
 import requests
 import json
 import time
@@ -50,7 +52,7 @@ class LiquidatorBot:
             return
 
         res = json.loads(res.text)
-        logger.info(str(res))
+        logger.debug(str(res))
 
         for liquidatableAccount in res['liquidatableAccounts']:
             self._liquidate(liquidatableAccount)
@@ -81,12 +83,12 @@ class LiquidatorBot:
 
         # get available balance of the repay token
         repay_token_available = self._get_balance(repay_token_contract)
-        logger.debug(
+        logger.info(
             f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
 
         # swap usdc for the repay token if needed
         if repay_token_available < 0.9 * liquidatable_amount:
-            logger.debug(
+            logger.info(
                 f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
             repay_token_amount_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
             repay_token_amount_needed = int(repay_token_amount_needed)
@@ -98,16 +100,16 @@ class LiquidatorBot:
             else:
                 # get new available balance of the repay token
                 repay_token_available = self._get_balance(repay_token_contract)
-                logger.debug(
+                logger.info(
                     f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
         else:
-            logger.debug(
+            logger.info(
                 f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, no need to get more')
 
         # define repay amount
         repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
         repay_amount = int(repay_amount)
-        logger.debug(
+        logger.info(
             f'Repay amount for token {repay_token} is {repay_amount / (10 ** repay_token_contract.decimals())}')
 
         # check allowance for token spend on LODESTAR Finance
@@ -165,13 +167,13 @@ class LiquidatorBot:
 
     def _set_allowance(self, token_contract: Contract, spender: Contract, amount: int):  # amount without decimals
         allowance = token_contract.allowance(self.user.address, spender)
-        logger.debug(
+        logger.info(
             f'Current allowance of {token_contract.symbol()} is: {allowance / (10 ** token_contract.decimals())}')
 
         # increase allowance if not enough
         if allowance < amount:
             tx = token_contract.approve(spender, amount, {'from': self.user})
-            logger.debug(
+            logger.info(
                 f'Allowed router to spend {amount / (10 ** token_contract.decimals())} {token_contract.symbol()}: {tx}')
 
     def _swap(self, token_in: Contract, token_out: Contract, amount_out: int, amount_in_max: int):
@@ -194,6 +196,8 @@ class LiquidatorBot:
 
 def main():
     logger.add_console()
+    logger.add_file('.', logging.INFO)
+
     logger.info('Connecting to network...')
 
     try:
