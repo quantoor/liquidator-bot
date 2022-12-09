@@ -4,15 +4,15 @@ import time
 import yaml
 import os
 from brownie import *
-from .util.logger import logger
+from .util.logger import logger, logging
 from .util.telegram_bot import TelegramBot
 from .util import util
+import traceback
 
 with open('config.yaml', 'r') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
 os.environ['$ARBISCAN_TOKEN'] = cfg['arbiscan_token']
-
 
 # for testing
 CHECK_STILL_LIQUIDATABLE = True
@@ -47,7 +47,7 @@ class LiquidatorBot:
             try:
                 self._poll_liquidatable_accounts()
             except Exception as e:
-                logger.error(f'Error: {e}')
+                logger.error(f'Error: {e} -> {traceback.format_exc()}')
             finally:
                 time.sleep(10)
 
@@ -59,7 +59,6 @@ class LiquidatorBot:
             return
 
         res = json.loads(res.text)
-        logger.debug(str(res))
 
         for liquidatableAccount in res['liquidatableAccounts']:
             self._liquidate(liquidatableAccount)
@@ -77,7 +76,7 @@ class LiquidatorBot:
         if CHECK_STILL_LIQUIDATABLE:
             _, _, fallout = self.unitroller.getAccountLiquidity(borrower_address)
             if fallout == 0:
-                logger.info(f'Account {borrower_address} is not liquidatable')
+                logger.warning(f'Account {borrower_address} is not liquidatable')
                 return
 
         # load contract for repay ltoken
@@ -97,13 +96,13 @@ class LiquidatorBot:
 
         # get available balance of the repay token
         repay_token_available = self._get_balance(repay_token_contract)
-        logger.info(
+        logger.debug(
             f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
 
         # swap usdc for the repay token if needed
         if GET_MORE_REPAY_TOKEN:
             if repay_token_available < 0.9 * liquidatable_amount:
-                logger.info(
+                logger.debug(
                     f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, liquidatable amount: {liquidatable_amount / (10 ** repay_token_decimals)}')
                 repay_token_amount_needed = liquidatable_amount - repay_token_available * 1.01  # give some margin
                 repay_token_amount_needed = int(repay_token_amount_needed)
@@ -115,16 +114,16 @@ class LiquidatorBot:
                 else:
                     # get new available balance of the repay token
                     repay_token_available = self._get_balance(repay_token_contract)
-                    logger.info(
+                    logger.debug(
                         f'Balance of {repay_token_contract.symbol()} is {repay_token_available / (10 ** repay_token_decimals)}')
             else:
-                logger.info(
+                logger.debug(
                     f'Repay token available: {repay_token_available / (10 ** repay_token_decimals)}, no need to get more')
 
         # define repay amount
         repay_amount = min(repay_token_available * 0.99, liquidatable_amount * 0.99)
         repay_amount = int(repay_amount)
-        logger.info(
+        logger.debug(
             f'Repay amount for token {repay_token} is {repay_amount / (10 ** repay_token_contract.decimals())}')
 
         # check allowance for token spend on LODESTAR Finance
@@ -138,8 +137,14 @@ class LiquidatorBot:
                     borrower_address,
                     int(repay_amount),
                     collateral_address,
-                    {'from': self.user}
+                    {'from': self.user, 'gas_limit': 200_000, 'allow_revert': True}
                 )
+
+                # todo change this
+                logger.debug(str(tx.info()))
+                logger.debug(f'revert_msg: {tx.revert_msg}')
+                logger.debug(f'traceback: {tx.traceback()}')
+                logger.debug(f'call_trace {tx.call_trace()}')
             except Exception as e:
                 # todo swap repay token back to USDC
                 raise Exception(f'liquidation failed: {e}')
@@ -158,7 +163,7 @@ class LiquidatorBot:
     def _get_more_repay_token(self, repay_token_needed: int, repay_ltoken_contract: Contract,
                               repay_token_contract: Contract):
 
-        logger.info(
+        logger.debug(
             f'Swapping USDC for {repay_token_needed / 10 ** repay_token_contract.decimals()} {repay_token_contract.symbol()}')
 
         expected_price = util.get_underlying_price(repay_ltoken_contract, repay_token_contract)
@@ -183,14 +188,14 @@ class LiquidatorBot:
 
     def _set_allowance(self, token: Contract, spender: Contract, amount: int):  # amount without decimals
         allowance = token.allowance(self.user.address, spender)
-        logger.info(
+        logger.debug(
             f'Current allowance of {token.symbol()} is: {allowance / (10 ** token.decimals())}')
 
         # increase allowance if not enough
         if allowance < amount:
             tx = token.approve(spender, amount, {'from': self.user})
-            logger.info(
-                f'Allowed router to spend {amount / (10 ** token.decimals())} {token.symbol()}: {tx}')
+            logger.debug(
+                f'Allowed {spender.address} to spend {amount / (10 ** token.decimals())} {token.symbol()}: {tx}')
 
     def _swap(self, token_in: Contract, token_out: Contract, amount_out: int, amount_in_max: int):
         self._set_allowance(token_in, self.router.address, amount_in_max)
@@ -212,9 +217,7 @@ class LiquidatorBot:
 
 def main():
     logger.add_console()
-    logger.add_file('.', logging.INFO)
-
-    logger.info('Connecting to network...')
+    logger.add_file('.', logging.DEBUG)
 
     try:
         network.connect('arbitrum-main')
