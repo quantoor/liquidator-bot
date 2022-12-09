@@ -15,3 +15,14 @@ def get_underlying_price(ltoken: Contract, token: Contract) -> float:
     price_oracle_contract = Contract('0x5947189d2D7765e4f629C803581FfD06bc57dE9B')
     aggregator_address = price_oracle_contract.aggregators(ltoken.address)[0]
     return price_oracle_contract.getPriceFromChainlink(aggregator_address) / (10 ** token.decimals())
+
+
+def load_contract(address: str) -> Contract:
+    try:
+        contract = Contract(address)
+    except:
+        try:
+            contract = Contract.from_explorer(address)
+        except Exception as e:
+            raise Exception(f'could not load contract {address}: {e}')
+    return contract
