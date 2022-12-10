@@ -89,7 +89,7 @@ class LiquidatorBot:
         # read available balance of the repay token
         # todo to be faster, load from dict {ltoken_address: underlying_contract}
         repay_token = repay_ltoken_contract.underlying()
-        repay_token_contract = util.load_contract(repay_token)
+        repay_token_contract = util.load_contract(repay_token)  # todo use IERC20 interface
         repay_token_decimals = repay_token_contract.decimals()
 
         # get available balance of the repay token
@@ -183,11 +183,16 @@ class LiquidatorBot:
             (repay_token_needed * expected_price) * (1 + max_slippage / 100)
         )
         amount_in_max = int(amount_in_max)
+        get_token_amount = repay_token_needed
 
-        # todo fix the logic: if not enough USDC balance, need to use exactInputSingle to maximize output
+        # check if enough balance, otherwise reduce the amount of token to get
+        if amount_in_max > usdc_balance:
+            amount_in_max = usdc_balance
+            get_token_amount = (usdc_balance / expected_price) * (1 - max_slippage / 100)
+            get_token_amount = int(get_token_amount)
 
         try:
-            tx = self._swap(self.usdc_contract, repay_token_contract, repay_token_needed, amount_in_max)
+            tx = self._swap(self.usdc_contract, repay_token_contract, get_token_amount, amount_in_max)
             logger.info(f'Executed swap {tx}')
         except Exception as e:
             raise Exception(f'swap failed: {e}')
